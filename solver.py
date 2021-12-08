@@ -3,9 +3,12 @@ from operator import itemgetter
 from Task import T
 import os
 import sys
-import heapq
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 cache = {}
+
 
 def solve(tasks, currTime):
     tasks_tuple = tuple(tasks)
@@ -54,10 +57,13 @@ def bad_bitch(input_file, output_file):
         lines = f.readlines()
         lines = [int(x) for x in lines]
 
-        for task_id in lines:
-            task = task_dict[task_id]
-            time += task.get_duration()
-            profit += task.get_late_benefit(time - task.get_deadline(), time)
+        with open(output_file + 'd', 'w') as f2:
+            for task_id in lines:
+                task = task_dict[task_id]
+                time += task.get_duration()
+                f2.write(str(task) + ' currTime ' + str(time) + '\n')
+                profit += task.get_late_benefit(time - task.get_deadline(), time)
+            f2.close()
         f.close()
 
     return profit
@@ -69,7 +75,7 @@ def switch(tasks, score):
     index = None
     time_index = None
 
-    while (i < len(tasks)):
+    while i < len(tasks):
         if i == 0:
             if index != None:
                 i = index
@@ -84,11 +90,6 @@ def switch(tasks, score):
         else:
             task = tasks[i]
             prev_task = tasks[i-1]
-
-            # task_benefit = task.get_late_benefit(time - task.get_deadline())
-            # prev_task_benefit = prev_task.get_late_benefit(time - task.get_duration() - prev_task.get_deadline())
-            # new_task_benefit = task.get_late_benefit(time - prev_task.get_duration() - task.get_deadline())
-            # new_prev_task_benefit = prev_task.get_late_benefit(time - prev_task.get_deadline())
 
             task_benefit = task.get_late_benefit(time - task.get_deadline(), time)
             prev_task_benefit = prev_task.get_late_benefit(time - task.get_duration() - prev_task.get_deadline(), time - task.get_duration())
@@ -106,7 +107,7 @@ def switch(tasks, score):
                 th_new_prev_task_benefit = prev_task.get_late_benefit(time - prev_task.get_deadline())
                 theoretical_gain += th_new_task_benefit + th_new_prev_task_benefit - th_task_benefit - th_prev_task_benefit
 
-            if new_score - score > 0.00000000001 or (all_late and theoretical_gain > 0.00000000001):
+            if new_score - score > 0.0000000001 or (all_late and theoretical_gain > 0.0000000001):
                 if index == None:
                     index = i
                     time_index = time
@@ -133,79 +134,61 @@ def switch(tasks, score):
                     time += tasks[i-1].get_duration()
 
 
-def mesh(currentTime, already_seen, output1, output2):
-    output1_tup = tuple(output1)
-    output2_tup = tuple(output2)
-    already_seen_tup = tuple(already_seen)
+def solve_by(tasks, function):
+    global cache
 
-    if (currentTime, already_seen_tup, output1_tup, output2_tup) in cache:
-        return cache[(currentTime, already_seen_tup, output1_tup, output2_tup)]
+    tasks.sort(key=function)
+    score, output, not_taken = solver(tasks)
+    cache = {}
 
-    if output1 == []:
-        score = 0
-        time = currentTime
-        final_list = []
-        for x in output2:
-            if x.get_task_id() not in already_seen:
-                time += x.get_duration()
-                score += x.get_late_benefit(time - x.get_deadline(), time)
-                final_list.append(x)
+    not_taken.sort(key=lambda x: x.get_duration())
+    for x in not_taken:
+        potential_score = score
+        potential_output = output
+        for i in range(1, len(output)+1):
+            new_output = output[:i] + [x] + output[i:]
+            new_score = compute_score(new_output)
+            if new_score > potential_score:
+                potential_score = new_score
+                potential_output = new_output
 
-        return score, final_list
+        score = potential_score
+        output = potential_output
 
-    if output2 == []:
-        score = 0
-        time = currentTime
-        final_list = []
-        for x in output1:
-            if x.get_task_id() not in already_seen:
-                time += x.get_duration()
-                score += x.get_late_benefit(time - x.get_deadline(), time)
-                final_list.append(x)
-
-        return score, final_list
-
-    if currentTime > T:
-        return 0, []
+    return score, output
 
 
-    score1, score2 = 0, 0
-    output1_list, output2_list = [], []
+def compute_score(output):
+    score = 0
+    currTime = 0
+    for x in output:
+        currTime += x.get_duration()
+        score += x.get_late_benefit(currTime-x.get_deadline(), currTime)
 
-    # with output 1
-    if output1[0].get_task_id() not in already_seen:
-        time = currentTime + output1[0].get_duration()
-        already_seen.add(output1[0].get_task_id())
+    return score
 
-        remaining = mesh(time, already_seen, output1[1:], output2)
-        score1 = output1[0].get_late_benefit(time - output1[0].get_deadline()) + remaining[0]
-        output1_list = [output1[0]] + remaining[1]
 
-        already_seen.remove(output1[0].get_task_id())
+def post_process_output(output):
+    currTime = 0
+    final = []
+    score = 0
+    for x in output:
+        if currTime + x.get_duration() <= T:
+            final.append(x.get_task_id())
+            currTime += x.get_duration()
+            score += x.get_late_benefit(currTime - x.get_deadline())
+        else:
+            break
 
-    # with output2
-    if output2[0].get_task_id() not in already_seen:
-        time = currentTime + output2[0].get_duration()
-        already_seen.add(output2[0].get_task_id())
-
-        remaining = mesh(time, already_seen, output1, output2[1:])
-        score2 = output2[0].get_late_benefit(time - output2[0].get_deadline()) + remaining[0]
-        output2_list = [output2[0]] + remaining[1]
-
-        already_seen.remove(output2[0].get_task_id())
-
-    if score1 > score2:
-        cache[(currentTime, already_seen_tup, output1_tup, output2_tup)] = score1, output1_list
-    else:
-        cache[(currentTime, already_seen_tup, output1_tup, output2_tup)] = score2, output2_list
-
-    return cache[(currentTime, already_seen_tup, output1_tup, output2_tup)]
+    return score, final
 
 
 if __name__ == '__main__':
-            count = 0
+    # sizes = ['small', 'medium', 'large']
+    # actual_size = [sizes[int(sys.argv[1])]]
+    #
     # for size in os.listdir('inputs/'):
-    #     if size not in ['small']:
+    #     if size not in actual_size:
     #         continue
     #     for input_file in os.listdir('inputs/{}/'.format(size)):
     #         if size not in input_file:
@@ -213,89 +196,39 @@ if __name__ == '__main__':
     #
     #         input_path = 'inputs/{}/{}'.format(size, input_file)
     #         output_path = 'outputs/{}/{}.out'.format(size, input_file[:-3])
-            input_path = 'inputs/small/small-65.in'
-            output_path = 'test_file.out'
-            print(input_path, output_path)
+    #         print(input_path, output_path)
 
-            tasks = read_input_file(input_path)
+            input_paths = ['inputs/large/large-79.in', 'inputs/small/small-245.in', 'inputs/small/small-254.in', 'inputs/small/small-267.in']
+            output_paths = ['test_file.out', 'test_file2.out', 'test_file3.out', 'test_file3.out']
 
-            tasks.sort(key=lambda x: x.get_deadline())
-            deadline_score, deadline_output, deadline_not_taken = solver(tasks)
-            cache = {}
+            for i in range(len(input_paths)):
 
-            current_time = sum([x.get_duration() for x in deadline_output])
-            deadline_not_taken.sort(key=lambda x: x.get_duration())
-            for x in deadline_not_taken:
-                current_time += x.get_duration()
-                deadline_score += x.get_late_benefit(current_time - x.get_deadline(), current_time)
+                input_path = input_paths[i]
+                output_path = output_paths[i]
+                print(input_path, output_path)
 
-            tasks.sort(key=lambda x: x.get_duration()/x.get_max_benefit())
-            duration_score, duration_output, duration_not_taken = solver(tasks)
-            cache = {}
+                tasks = read_input_file(input_path)
 
-            current_time = sum([x.get_duration() for x in duration_output])
-            duration_not_taken.sort(key=lambda x: x.get_deadline(), reverse=True)
-            for x in duration_not_taken:
-                current_time += x.get_duration()
-                duration_score += x.get_late_benefit(current_time - x.get_deadline(), current_time)
+                deadline_score, deadline_output = solve_by(tasks, lambda x: x.get_deadline())
+                duration_score, duration_output = solve_by(tasks, lambda x: x.get_duration())
+                duration_profit_score, duration_profit_output = solve_by(tasks, lambda x: x.get_duration()/x.get_max_benefit())
+                deadline_profit_score, deadline_profit_output = solve_by(tasks, lambda x: x.get_deadline()/x.get_max_benefit())
 
-            deadline_output += deadline_not_taken
-            duration_output += duration_not_taken
+                switch(deadline_output, deadline_score)
+                switch(duration_output, duration_score)
+                switch(duration_profit_output, duration_profit_score)
+                switch(deadline_profit_output, deadline_profit_score)
 
-            switch(deadline_output, deadline_score)
-            switch(duration_output, duration_score)
+                configs = list()
+                configs.append(post_process_output(deadline_output))
+                configs.append(post_process_output(duration_output))
+                configs.append(post_process_output(duration_profit_output))
+                configs.append(post_process_output(deadline_profit_output))
 
-            configs = []
+                print(configs[0][0], configs[1][0], configs[2][0], configs[3][0], configs[4][0])
+                final_list = max(configs, key=itemgetter(0))
 
-            current_time = 0
-            deadline_final = []
-            final_deadline_score = 0
-            for x in deadline_output:
-                if current_time + x.get_duration() <= T:
-                    deadline_final.append(x.get_task_id())
-                    current_time += x.get_duration()
-                    final_deadline_score += x.get_late_benefit(current_time - x.get_deadline())
-                else:
-                    break
+                final_list = final_list[1]
 
-            configs.append((final_deadline_score, deadline_final))
-
-            current_time = 0
-            duration_final = []
-            final_duration_score = 0
-            for x in duration_output:
-                if current_time + x.get_duration() <= T:
-                    duration_final.append(x.get_task_id())
-                    current_time += x.get_duration()
-                    final_duration_score += x.get_late_benefit(current_time - x.get_deadline())
-                else:
-                    break
-
-            configs.append((final_duration_score, duration_final))
-
-            current_time = 0
-            mesh_output = mesh(0, set(), deadline_output, duration_output)[1]
-            cache = {}
-            mesh_final = []
-            final_mesh_score = 0
-            for x in mesh_output:
-                if current_time + x.get_duration() <= T:
-                    mesh_final.append(x.get_task_id())
-                    current_time += x.get_duration()
-                    final_mesh_score += x.get_late_benefit(current_time - x.get_deadline())
-                else:
-                    break
-
-            configs.append((final_mesh_score, mesh_final))
-
-            print(configs[0][0], configs[1][0], configs[2][0])
-            final_list = (max(configs, key=itemgetter(0)))
-
-            if final_list[0] == final_mesh_score:
-                count += 1
-
-            final_list = final_list[1]
-
-            write_output_file(output_path, final_list)
-            # print(bad_bitch(input_path, output_path))
-            print(count)
+                write_output_file(output_path, final_list)
+                print(bad_bitch(input_path, output_path))

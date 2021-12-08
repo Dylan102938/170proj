@@ -42,3 +42,72 @@ def solve(currentTime, not_taken_late, not_taken_early, tasks):
     if len(not_taken_late) > 0:
         new_time = currentTime + not_taken_late[0].get_duration()
         remaining_profit, remaining_list, remaining_not_taken = solve(new_time, not_taken_late[1:], not_taken_early, tasks[1:])
+
+
+def mesh(currentTime, already_seen, output1, output2):
+    output1_tup = tuple(output1)
+    output2_tup = tuple(output2)
+    already_seen_tup = tuple(already_seen)
+
+    if (currentTime, already_seen_tup, output1_tup, output2_tup) in cache:
+        return cache[(currentTime, already_seen_tup, output1_tup, output2_tup)]
+
+    if output1 == []:
+        score = 0
+        time = currentTime
+        final_list = []
+        for x in output2:
+            if x.get_task_id() not in already_seen:
+                time += x.get_duration()
+                score += x.get_late_benefit(time - x.get_deadline(), time)
+                final_list.append(x)
+
+        return score, final_list
+
+    if output2 == []:
+        score = 0
+        time = currentTime
+        final_list = []
+        for x in output1:
+            if x.get_task_id() not in already_seen:
+                time += x.get_duration()
+                score += x.get_late_benefit(time - x.get_deadline(), time)
+                final_list.append(x)
+
+        return score, final_list
+
+    if currentTime > T:
+        return 0, []
+
+
+    score1, score2 = 0, 0
+    output1_list, output2_list = [], []
+
+    # with output 1
+    if output1[0].get_task_id() not in already_seen:
+        time = currentTime + output1[0].get_duration()
+        already_seen.add(output1[0].get_task_id())
+
+        remaining = mesh(time, already_seen, output1[1:], output2)
+        score1 = output1[0].get_late_benefit(time - output1[0].get_deadline()) + remaining[0]
+        output1_list = [output1[0]] + remaining[1]
+
+        already_seen.remove(output1[0].get_task_id())
+
+    # with output2
+    if output2[0].get_task_id() not in already_seen:
+        time = currentTime + output2[0].get_duration()
+        already_seen.add(output2[0].get_task_id())
+
+        remaining = mesh(time, already_seen, output1, output2[1:])
+        score2 = output2[0].get_late_benefit(time - output2[0].get_deadline()) + remaining[0]
+        output2_list = [output2[0]] + remaining[1]
+
+        already_seen.remove(output2[0].get_task_id())
+
+    if score1 > score2:
+        cache[(currentTime, already_seen_tup, output1_tup, output2_tup)] = score1, output1_list
+    else:
+        cache[(currentTime, already_seen_tup, output1_tup, output2_tup)] = score2, output2_list
+
+    return cache[(currentTime, already_seen_tup, output1_tup, output2_tup)]
